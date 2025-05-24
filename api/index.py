@@ -4,7 +4,7 @@ import uuid
 import json # For debugging payloads
 from fastapi import FastAPI, File, UploadFile, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel
 from dotenv import load_dotenv
 import boto3
@@ -17,7 +17,8 @@ import traceback
 from elevenlabs.client import ElevenLabs
 from elevenlabs import VoiceSettings, Voice
 
-load_dotenv()
+# Load environment variables from the root directory
+load_dotenv(os.path.join(os.path.dirname(os.path.dirname(__file__)), '.env'))
 
 # --- Environment Variable Loading and Validation ---
 ELEVEN_LABS_API_KEY = os.getenv("ELEVEN_LABS_API_KEY")

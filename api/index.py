@@ -340,6 +340,12 @@ async def initiate_faceswap_endpoint(user_image: UploadFile = File(...)):
         print(error_msg)
         raise HTTPException(status_code=500, detail=error_msg)
     
+    # Validate other critical Akool variables
+    if not TARGET_FACE_IMAGE_URL or not TARGET_FACE_OPTS_STR:
+        error_msg = "TARGET_FACE_IMAGE_URL or TARGET_FACE_OPTS_STR is not configured in server environment."
+        print(error_msg)
+        raise HTTPException(status_code=500, detail=error_msg)
+        
     try:
         # Upload image to S3
         print("Uploading image to S3...")
@@ -350,7 +356,7 @@ async def initiate_faceswap_endpoint(user_image: UploadFile = File(...)):
         print("Getting face landmarks from Akool...")
         landmarks_str = await get_akool_face_opts(image_url, AKOOL_API_KEY)
         if not landmarks_str:
-            error_msg = "Failed to detect face in the uploaded image"
+            error_msg = "Failed to detect face in the uploaded image using Akool /detect. Check uploaded image or Akool /detect logs."
             print(error_msg)
             raise HTTPException(status_code=400, detail=error_msg)
         print(f"Face landmarks obtained: {landmarks_str}")
@@ -369,16 +375,37 @@ async def initiate_faceswap_endpoint(user_image: UploadFile = File(...)):
             "target_landmarks_str": TARGET_FACE_OPTS_STR
         }
         
+        print(f"Akool Faceswap Request URL: {faceswap_url}")
+        print(f"Akool Faceswap Request Headers: {json.dumps(headers, indent=2)}")
+        print(f"Akool Faceswap Request Payload: {json.dumps(payload, indent=2)}")
+        
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(faceswap_url, headers=headers, json=payload)
-            response.raise_for_status()
-            data = response.json()
-            print(f"Akool faceswap response: {data}")
+            # Always try to parse JSON, but prepare for non-JSON responses too
+            response_text = response.text
+            print(f"Akool Faceswap Raw Response Status: {response.status_code}")
+            print(f"Akool Faceswap Raw Response Headers: {json.dumps(dict(response.headers), indent=2)}")
+            print(f"Akool Faceswap Raw Response Body: {response_text}")
+
+            response.raise_for_status() # Will raise an exception for 4xx/5xx responses
+            
+            try:
+                data = response.json()
+            except json.JSONDecodeError:
+                error_msg = "Failed to decode JSON response from Akool faceswap API."
+                print(f"{error_msg} Response text was: {response_text}")
+                raise HTTPException(status_code=502, detail=error_msg) # 502 Bad Gateway
+
+            print(f"Akool faceswap Parsed JSON Response: {json.dumps(data, indent=2)}")
             
             if data.get("error_code") != 0:
-                error_msg = f"Akool faceswap error: {data.get('error_msg', 'Unknown error')}"
+                # Use the error_msg from Akool if available, otherwise provide a more generic one
+                akool_error_message = data.get("error_msg", "No specific error message provided by Akool.")
+                error_msg = f"Akool faceswap API error. Code: {data.get('error_code')}. Message: {akool_error_message}"
                 print(error_msg)
-                raise HTTPException(status_code=500, detail=error_msg)
+                # Include the full Akool response in the server log for easier debugging
+                print(f"Full Akool error response: {json.dumps(data)}")
+                raise HTTPException(status_code=500, detail=error_msg) # Keep 500 for internal processing based on Akool's error
             
             return {
                 "akool_task_id": data.get("task_id"),
@@ -388,9 +415,21 @@ async def initiate_faceswap_endpoint(user_image: UploadFile = File(...)):
                 "direct_url": data.get("url")
             }
             
+    except httpx.HTTPStatusError as hse:
+        # This catches errors from response.raise_for_status() like 401, 403, 429, 5xx from Akool
+        error_body = hse.response.text
+        print(f"Akool Faceswap API returned HTTP error: {hse.response.status_code}. Response: {error_body}")
+        detail_message = f"Akool API request failed with status {hse.response.status_code}."
+        try:
+            # Attempt to parse error from Akool's JSON response if it's a JSON error
+            error_json = hse.response.json()
+            detail_message += f" Akool message: {error_json.get('error_msg', error_json.get('message', 'No specific message.'))}"
+        except json.JSONDecodeError:
+            detail_message += f" Response body: {error_body[:200]}" # Show first 200 chars
+        raise HTTPException(status_code=502, detail=detail_message) # 502 Bad Gateway, as we failed to get valid response
     except HTTPException as he:
-        print(f"HTTP Exception in faceswap: {str(he)}")
-        raise he
+        print(f"HTTP Exception in faceswap: {str(he.detail)}") # Log the detail of our own HTTPExceptions
+        raise he # Re-raise it
     except Exception as e:
         error_msg = f"Unexpected error in faceswap: {str(e)}"
         print(error_msg)

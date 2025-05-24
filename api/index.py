@@ -14,8 +14,7 @@ import sys
 import traceback
 
 # ElevenLabs SDK
-from elevenlabs.client import ElevenLabs
-from elevenlabs import VoiceSettings, Voice
+from elevenlabs import generate, play, set_api_key, Voice, VoiceSettings
 
 # Load environment variables from the root directory
 load_dotenv(os.path.join(os.path.dirname(os.path.dirname(__file__)), '.env'))
@@ -103,7 +102,7 @@ else:
 elevenlabs_client = None
 if ELEVEN_LABS_API_KEY:
     try:
-        elevenlabs_client = ElevenLabs(api_key=ELEVEN_LABS_API_KEY)
+        set_api_key(ELEVEN_LABS_API_KEY)
         print("ElevenLabs client initialized successfully.")
     except Exception as e:
         print(f"Error initializing ElevenLabs client: {e}")
@@ -225,8 +224,8 @@ async def read_root():
 
 @app.post("/api/test-elevenlabs-tts")
 async def test_elevenlabs_tts():
-    if not elevenlabs_client:
-        raise HTTPException(status_code=500, detail="ElevenLabs client not initialized.")
+    if not ELEVEN_LABS_API_KEY:
+        raise HTTPException(status_code=500, detail="ElevenLabs API key not configured.")
     
     test_text = "딥페이크 영상은 누구나 손쉽게 만들 수 있는데요."
     test_voice_id = "21m00Tcm4TlvDq8ikWAM"  # Rachel's voice ID (standard ElevenLabs voice)
@@ -235,90 +234,80 @@ async def test_elevenlabs_tts():
     print(f"Testing ElevenLabs TTS with: VoiceID='{test_voice_id}', Model='{test_model_id}', Text='{test_text}'")
 
     try:
-        audio_stream = elevenlabs_client.text_to_speech.convert(
+        audio = generate(
             text=test_text,
-            voice_id=test_voice_id,
-            model_id=test_model_id,
-            voice_settings=VoiceSettings(
-                stability=0.7,
-                similarity_boost=0.7,
-                style=0.0,
-                use_speaker_boost=True
+            voice=Voice(
+                voice_id=test_voice_id,
+                settings=VoiceSettings(
+                    stability=0.7,
+                    similarity_boost=0.7,
+                    style=0.0,
+                    use_speaker_boost=True
+                )
             ),
-            output_format="mp3_44100_128"
+            model=test_model_id
         )
-        return StreamingResponse(audio_stream, media_type="audio/mpeg")
+        return StreamingResponse(audio, media_type="audio/mpeg")
     except Exception as e:
         error_message = f"ElevenLabs TTS test failed: {str(e)}"
         print(error_message)
-        # Attempt to parse more specific error from ElevenLabs client if available
-        error_detail_msg = error_message
-        if hasattr(e, 'body') and isinstance(e.body, dict) and 'detail' in e.body:
-            detail = e.body['detail']
-            if isinstance(detail, list) and detail and isinstance(detail[0], dict) and 'msg' in detail[0]:
-                error_detail_msg = f"ElevenLabs TTS test failed: {detail[0]['msg']}"
-            elif isinstance(detail, str):
-                 error_detail_msg = f"ElevenLabs TTS test failed: {detail}"
-        raise HTTPException(status_code=500, detail=error_detail_msg)
+        raise HTTPException(status_code=500, detail=error_message)
 
 @app.post("/api/clone-voice")
 async def clone_voice(audio_file: UploadFile = File(...)):
-    if not elevenlabs_client:
-        raise HTTPException(status_code=500, detail="ElevenLabs client not initialized. Check API key.")
+    if not ELEVEN_LABS_API_KEY:
+        raise HTTPException(status_code=500, detail="ElevenLabs API key not configured.")
     try:
-        # Ensure audio_file.file is directly passed if the SDK expects a file-like object
-        # The SDK's add method for voices typically expects a list of file-like objects or paths
-        voice = elevenlabs_client.voices.add(
-            name=f"UserClonedVoice_{uuid.uuid4().hex[:6]}", # Unique name
-            description="Voice cloned from user recording for deepfake awareness.",
-            files=[audio_file.file], # Changed this line
-        )
+        # Save the uploaded file temporarily
+        temp_path = f"temp_uploaded_files/{uuid.uuid4()}.wav"
+        os.makedirs("temp_uploaded_files", exist_ok=True)
+        
+        with open(temp_path, "wb") as f:
+            content = await audio_file.read()
+            f.write(content)
+        
+        # Use the elevenlabs API to clone the voice
+        voice = Voice.from_file(temp_path)
+        voice.name = f"UserClonedVoice_{uuid.uuid4().hex[:6]}"
+        voice.description = "Voice cloned from user recording for deepfake awareness."
+        
+        # Clean up the temporary file
+        os.remove(temp_path)
+        
         return {"voice_id": voice.voice_id if voice else None}
     except Exception as e:
         print(f"Error cloning voice with ElevenLabs: {e}")
-        # Attempt to parse ElevenLabs specific error if possible
-        error_detail = str(e)
-        if hasattr(e, 'body') and isinstance(e.body, dict) and 'detail' in e.body: # type: ignore
-            error_detail = e.body['detail'] # type: ignore
-        raise HTTPException(status_code=500, detail=f"Error cloning voice: {error_detail}")
+        raise HTTPException(status_code=500, detail=f"Error cloning voice: {str(e)}")
 
 
 @app.post("/api/generate-narrator-speech")
 async def generate_narrator_speech_endpoint(request_data: NarratorSpeechRequest):
-    if not elevenlabs_client:
-        print("Error: ElevenLabs client not initialized. Check API key in .env")
-        raise HTTPException(status_code=500, detail="ElevenLabs client not available. Configuration issue.")
+    if not ELEVEN_LABS_API_KEY:
+        print("Error: ElevenLabs API key not configured.")
+        raise HTTPException(status_code=500, detail="ElevenLabs API key not configured.")
     
     try:
         print(f"Narrator speech request: Text='{request_data.text[:50]}...', VoiceID='{request_data.voice_id}', Model='{request_data.model_id}'")
         
-        # Corrected to use text_to_speech.convert and adjusted parameters
-        audio_stream = elevenlabs_client.text_to_speech.convert(
+        audio = generate(
             text=request_data.text,
-            voice_id=request_data.voice_id, # Use the voice_id from the request
-            model_id=request_data.model_id,
-            voice_settings=VoiceSettings( # Added explicit voice settings
-                stability=0.7, # Default or adjust as needed
-                similarity_boost=0.7, # Default or adjust as needed
-                style=0.0, # Default or adjust as needed
-                use_speaker_boost=True # Default or adjust as needed
+            voice=Voice(
+                voice_id=request_data.voice_id,
+                settings=VoiceSettings(
+                    stability=0.7,
+                    similarity_boost=0.7,
+                    style=0.0,
+                    use_speaker_boost=True
+                )
             ),
-            output_format="mp3_44100_128"
+            model=request_data.model_id
         )
         
-        return StreamingResponse(audio_stream, media_type="audio/mpeg")
+        return StreamingResponse(audio, media_type="audio/mpeg")
 
     except Exception as e:
         error_message = f"Failed to generate narrator speech: {str(e)}"
         print(f"Error in /api/generate-narrator-speech: {error_message}")
-        # Attempt to parse more specific error from ElevenLabs client if available
-        if hasattr(e, 'body') and isinstance(e.body, dict) and 'detail' in e.body:
-            detail = e.body['detail']
-            if isinstance(detail, list) and detail and isinstance(detail[0], dict) and 'msg' in detail[0]:
-                error_message = f"ElevenLabs API Error: {detail[0]['msg']}"
-            elif isinstance(detail, str):
-                 error_message = f"ElevenLabs API Error: {detail}"
-        
         raise HTTPException(status_code=500, detail=error_message)
 
 

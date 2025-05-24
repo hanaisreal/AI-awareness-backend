@@ -372,7 +372,8 @@ async def initiate_faceswap_endpoint(user_image: UploadFile = File(...)):
             "source_image_url": image_url,
             "target_image_url": TARGET_FACE_IMAGE_URL,
             "landmarks_str": landmarks_str,
-            "target_landmarks_str": TARGET_FACE_OPTS_STR
+            "target_landmarks_str": TARGET_FACE_OPTS_STR,
+            "video_url": EDUCATIONAL_VIDEO_URL  # Add the educational video URL
         }
         
         print(f"Akool Faceswap Request URL: {faceswap_url}")
@@ -413,6 +414,12 @@ async def initiate_faceswap_endpoint(user_image: UploadFile = File(...)):
                         error_msg += " (EDUCATIONAL_VIDEO_URL is not set in environment variables)"
                     else:
                         error_msg += f" (Check if EDUCATIONAL_VIDEO_URL is accessible: {EDUCATIONAL_VIDEO_URL})"
+                        # Add more detailed error information
+                        error_msg += "\nPlease verify:\n"
+                        error_msg += f"1. Video URL is accessible: {EDUCATIONAL_VIDEO_URL}\n"
+                        error_msg += f"2. Video format is supported (MP4, M4V)\n"
+                        error_msg += f"3. Video is publicly accessible\n"
+                        error_msg += f"4. Video file exists and is not corrupted"
                 
                 raise HTTPException(status_code=500, detail=error_msg)
             

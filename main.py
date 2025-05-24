@@ -10,6 +10,8 @@ from dotenv import load_dotenv
 import boto3
 from botocore.exceptions import NoCredentialsError, PartialCredentialsError, ClientError
 from typing import Optional, Dict
+import sys
+import traceback
 
 # ElevenLabs SDK
 from elevenlabs.client import ElevenLabs
@@ -47,7 +49,11 @@ if not all([S3_BUCKET_NAME, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION
 
 
 # --- FastAPI Application Setup ---
-app = FastAPI()
+app = FastAPI(
+    title="Voice Cloning API",
+    description="API for voice cloning and face swapping",
+    version="1.0.0"
+)
 
 # Get CORS origins from environment variable, with fallback to localhost
 CORS_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",")
@@ -60,6 +66,20 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Add error handling middleware
+@app.middleware("http")
+async def catch_exceptions_middleware(request, call_next):
+    try:
+        return await call_next(request)
+    except Exception as e:
+        print(f"Unhandled error: {str(e)}")
+        print("Traceback:")
+        print(traceback.format_exc())
+        return JSONResponse(
+            status_code=500,
+            content={"detail": f"Internal server error: {str(e)}"}
+        )
 
 # --- AWS S3 Client Initialization ---
 s3_client = None
@@ -196,7 +216,11 @@ async def stream_video_from_url_helper(video_url: str):
 # --- API Endpoints ---
 @app.get("/")
 async def read_root():
-    return {"message": "Voice Cloning & Faceswap API is running"}
+    return {
+        "message": "Voice Cloning & Faceswap API is running",
+        "status": "healthy",
+        "version": "1.0.0"
+    }
 
 @app.post("/api/test-elevenlabs-tts")
 async def test_elevenlabs_tts():

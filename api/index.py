@@ -2,7 +2,7 @@ import os
 import httpx
 import uuid
 import json # For debugging payloads
-from fastapi import FastAPI, File, UploadFile, HTTPException, Query
+from fastapi import FastAPI, File, UploadFile, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel
@@ -57,15 +57,19 @@ app = FastAPI(
 )
 
 # Get CORS origins from environment variable, with fallback to localhost
-CORS_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",")
-CORS_ORIGINS = [origin.strip() for origin in CORS_ORIGINS]  # Clean up any whitespace
+CORS_ORIGINS = [
+    "https://ai-awareness-frontend.vercel.app",
+    "http://localhost:3000",
+    "https://ai-awareness-frontend-10dpc500r-hanaisreals-projects.vercel.app"
+]
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
+    expose_headers=["*"]
 )
 
 # Add error handling middleware
@@ -498,6 +502,21 @@ async def stream_video(url: str = Query(...)):
     except Exception as e:
         print(f"[STREAM_VIDEO] General Exception while fetching video: {e} (Type: {type(e)})")
         raise HTTPException(status_code=500, detail=f"An unexpected error occurred while trying to stream video: {str(e)}")
+
+
+# Add OPTIONS handler for CORS preflight requests
+@app.options("/{full_path:path}")
+async def options_handler(request: Request, full_path: str):
+    return Response(
+        status_code=200,
+        headers={
+            "Access-Control-Allow-Origin": request.headers.get("origin", "*"),
+            "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type, Authorization",
+            "Access-Control-Allow-Credentials": "true",
+            "Access-Control-Max-Age": "3600",
+        }
+    )
 
 
 if __name__ == "__main__":

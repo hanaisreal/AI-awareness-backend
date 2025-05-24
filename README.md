@@ -43,7 +43,7 @@ UPLOAD_FOLDER=temp_uploaded_files
 
 5. Run the development server:
 ```bash
-uvicorn main:app --reload
+uvicorn api.index:app --reload
 ```
 
 The API will be available at [http://localhost:8000](http://localhost:8000)

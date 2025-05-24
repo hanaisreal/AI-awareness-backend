@@ -398,14 +398,23 @@ async def initiate_faceswap_endpoint(user_image: UploadFile = File(...)):
 
             print(f"Akool faceswap Parsed JSON Response: {json.dumps(data, indent=2)}")
             
-            if data.get("error_code") != 0:
-                # Use the error_msg from Akool if available, otherwise provide a more generic one
-                akool_error_message = data.get("error_msg", "No specific error message provided by Akool.")
-                error_msg = f"Akool faceswap API error. Code: {data.get('error_code')}. Message: {akool_error_message}"
+            # Check for both error formats
+            if data.get("error_code") != 0 or data.get("status") == 404:
+                # Handle both error formats
+                error_code = data.get("error_code") or data.get("status")
+                error_message = data.get("error_msg") or data.get("msg", "No specific error message provided by Akool.")
+                error_msg = f"Akool faceswap API error. Code: {error_code}. Message: {error_message}"
                 print(error_msg)
-                # Include the full Akool response in the server log for easier debugging
                 print(f"Full Akool error response: {json.dumps(data)}")
-                raise HTTPException(status_code=500, detail=error_msg) # Keep 500 for internal processing based on Akool's error
+                
+                # If it's a 404, it might be because the educational video URL is not set
+                if data.get("status") == 404:
+                    if not EDUCATIONAL_VIDEO_URL:
+                        error_msg += " (EDUCATIONAL_VIDEO_URL is not set in environment variables)"
+                    else:
+                        error_msg += f" (Check if EDUCATIONAL_VIDEO_URL is accessible: {EDUCATIONAL_VIDEO_URL})"
+                
+                raise HTTPException(status_code=500, detail=error_msg)
             
             return {
                 "akool_task_id": data.get("task_id"),

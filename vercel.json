@@ -9,7 +9,7 @@
   "routes": [
     {
       "src": "/api/(.*)",
-      "dest": "/api/$1",
+      "dest": "/api/index.py",
       "headers": {
         "Access-Control-Allow-Origin": "https://ai-awareness-frontend.vercel.app",
         "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
@@ -18,8 +18,8 @@
       }
     },
     {
-      "src": "/(.*)",
-      "dest": "/api/$1",
+      "src": "/",
+      "dest": "/api/index.py",
       "headers": {
         "Access-Control-Allow-Origin": "https://ai-awareness-frontend.vercel.app",
         "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",

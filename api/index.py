@@ -381,22 +381,39 @@ async def initiate_faceswap_endpoint(user_image: UploadFile = File(...)):
         print(f"Akool Faceswap Request Headers: {json.dumps(headers, indent=2)}")
         print(f"Akool Faceswap Request Payload: {json.dumps(payload, indent=2)}")
         
+        # Verify video URL accessibility before making the API call
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                video_check = await client.head(EDUCATIONAL_VIDEO_URL)
+                print(f"Video URL check status: {video_check.status_code}")
+                print(f"Video URL check headers: {dict(video_check.headers)}")
+                if video_check.status_code != 200:
+                    error_msg = f"Educational video is not accessible. Status code: {video_check.status_code}"
+                    print(error_msg)
+                    raise HTTPException(status_code=500, detail=error_msg)
+        except Exception as e:
+            error_msg = f"Failed to verify video URL accessibility: {str(e)}"
+            print(error_msg)
+            raise HTTPException(status_code=500, detail=error_msg)
+        
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(faceswap_url, headers=headers, json=payload)
-            # Always try to parse JSON, but prepare for non-JSON responses too
             response_text = response.text
             print(f"Akool Faceswap Raw Response Status: {response.status_code}")
             print(f"Akool Faceswap Raw Response Headers: {json.dumps(dict(response.headers), indent=2)}")
             print(f"Akool Faceswap Raw Response Body: {response_text}")
 
-            response.raise_for_status() # Will raise an exception for 4xx/5xx responses
-            
             try:
+                response.raise_for_status()
                 data = response.json()
+            except httpx.HTTPStatusError as e:
+                error_msg = f"Akool API request failed with status {e.response.status_code}"
+                print(error_msg)
+                raise HTTPException(status_code=502, detail=error_msg)
             except json.JSONDecodeError:
                 error_msg = "Failed to decode JSON response from Akool faceswap API."
                 print(f"{error_msg} Response text was: {response_text}")
-                raise HTTPException(status_code=502, detail=error_msg) # 502 Bad Gateway
+                raise HTTPException(status_code=502, detail=error_msg)
 
             print(f"Akool faceswap Parsed JSON Response: {json.dumps(data, indent=2)}")
             

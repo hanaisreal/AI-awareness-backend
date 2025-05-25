@@ -60,7 +60,8 @@ app = FastAPI(
 CORS_ORIGINS = [
     "https://ai-awareness-frontend.vercel.app",
     "http://localhost:3000",
-    "https://ai-awareness-frontend-10dpc500r-hanaisreals-projects.vercel.app"
+    "https://ai-awareness-frontend-*.vercel.app",
+    "https://*.vercel.app"  # Allow all Vercel preview deployments
 ]
 
 app.add_middleware(

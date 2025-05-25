@@ -56,21 +56,22 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# Get CORS origins from environment variable, with fallback to localhost
+# CORS configuration
 CORS_ORIGINS = [
     "https://ai-awareness-frontend.vercel.app",
     "http://localhost:3000",
-    "https://ai-awareness-frontend-*.vercel.app",
-    "https://*.vercel.app"  # Allow all Vercel preview deployments
+    "https://ai-awareness-frontend-10dpc500r-hanaisreals-projects.vercel.app",
+    "https://*.vercel.app",  # Allow all Vercel preview deployments
+    "http://localhost:8000",  # Allow local backend
+    "https://ai-awarenesss-backend.vercel.app"  # Add your backend Vercel URL
 ]
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["*"]
 )
 
 # Add error handling middleware
@@ -342,8 +343,8 @@ async def initiate_faceswap_endpoint(user_image: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail=error_msg)
     
     # Validate other critical Akool variables
-    if not TARGET_FACE_IMAGE_URL or not TARGET_FACE_OPTS_STR:
-        error_msg = "TARGET_FACE_IMAGE_URL or TARGET_FACE_OPTS_STR is not configured in server environment."
+    if not EDUCATIONAL_VIDEO_URL:
+        error_msg = "EDUCATIONAL_VIDEO_URL is not configured in server environment."
         print(error_msg)
         raise HTTPException(status_code=500, detail=error_msg)
         
@@ -353,48 +354,53 @@ async def initiate_faceswap_endpoint(user_image: UploadFile = File(...)):
         image_url = await upload_to_s3(user_image, S3_BUCKET_NAME)
         print(f"Image uploaded to S3: {image_url}")
         
-        # Get face landmarks
-        print("Getting face landmarks from Akool...")
-        landmarks_str = await get_akool_face_opts(image_url, AKOOL_API_KEY)
-        if not landmarks_str:
+        # Get face landmarks for source image (user's uploaded image)
+        print("Getting face landmarks for source image from Akool...")
+        source_landmarks = await get_akool_face_opts(image_url, AKOOL_API_KEY)
+        if not source_landmarks:
             error_msg = "Failed to detect face in the uploaded image using Akool /detect. Check uploaded image or Akool /detect logs."
             print(error_msg)
             raise HTTPException(status_code=400, detail=error_msg)
-        print(f"Face landmarks obtained: {landmarks_str}")
+        print(f"Source face landmarks obtained: {source_landmarks}")
+        
+        # Get face landmarks for target image (educational video)
+        print("Getting face landmarks for target image from Akool...")
+        target_landmarks = await get_akool_face_opts(TARGET_FACE_IMAGE_URL, AKOOL_API_KEY)
+        if not target_landmarks:
+            error_msg = "Failed to detect face in the target image using Akool /detect. Check target image or Akool /detect logs."
+            print(error_msg)
+            raise HTTPException(status_code=400, detail=error_msg)
+        print(f"Target face landmarks obtained: {target_landmarks}")
         
         # Call Akool faceswap API
         print("Calling Akool faceswap API...")
-        faceswap_url = f"{AKOOL_API_BASE_URL}/faceswap"
+        faceswap_url = f"{AKOOL_API_BASE_URL}/faceswap/highquality/specifyvideo"
         headers = {
             "Authorization": f"Bearer {AKOOL_API_KEY}",
             "Content-Type": "application/json"
         }
+        
         payload = {
-            "source_image_url": image_url,
-            "target_image_url": TARGET_FACE_IMAGE_URL,
-            "landmarks_str": landmarks_str,
-            "target_landmarks_str": TARGET_FACE_OPTS_STR,
-            "video_url": EDUCATIONAL_VIDEO_URL  # Add the educational video URL
+            "sourceImage": [
+                {
+                    "path": image_url,
+                    "opts": source_landmarks
+                }
+            ],
+            "targetImage": [
+                {
+                    "path": TARGET_FACE_IMAGE_URL,
+                    "opts": target_landmarks
+                }
+            ],
+            "face_enhance": 0,
+            "modifyVideo": EDUCATIONAL_VIDEO_URL,
+            "webhookUrl": AKOOL_WEBHOOK_URL if AKOOL_WEBHOOK_URL else None
         }
         
         print(f"Akool Faceswap Request URL: {faceswap_url}")
         print(f"Akool Faceswap Request Headers: {json.dumps(headers, indent=2)}")
         print(f"Akool Faceswap Request Payload: {json.dumps(payload, indent=2)}")
-        
-        # Verify video URL accessibility before making the API call
-        try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                video_check = await client.head(EDUCATIONAL_VIDEO_URL)
-                print(f"Video URL check status: {video_check.status_code}")
-                print(f"Video URL check headers: {dict(video_check.headers)}")
-                if video_check.status_code != 200:
-                    error_msg = f"Educational video is not accessible. Status code: {video_check.status_code}"
-                    print(error_msg)
-                    raise HTTPException(status_code=500, detail=error_msg)
-        except Exception as e:
-            error_msg = f"Failed to verify video URL accessibility: {str(e)}"
-            print(error_msg)
-            raise HTTPException(status_code=500, detail=error_msg)
         
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(faceswap_url, headers=headers, json=payload)
@@ -403,13 +409,10 @@ async def initiate_faceswap_endpoint(user_image: UploadFile = File(...)):
             print(f"Akool Faceswap Raw Response Headers: {json.dumps(dict(response.headers), indent=2)}")
             print(f"Akool Faceswap Raw Response Body: {response_text}")
 
+            response.raise_for_status()
+            
             try:
-                response.raise_for_status()
                 data = response.json()
-            except httpx.HTTPStatusError as e:
-                error_msg = f"Akool API request failed with status {e.response.status_code}"
-                print(error_msg)
-                raise HTTPException(status_code=502, detail=error_msg)
             except json.JSONDecodeError:
                 error_msg = "Failed to decode JSON response from Akool faceswap API."
                 print(f"{error_msg} Response text was: {response_text}")
@@ -417,53 +420,33 @@ async def initiate_faceswap_endpoint(user_image: UploadFile = File(...)):
 
             print(f"Akool faceswap Parsed JSON Response: {json.dumps(data, indent=2)}")
             
-            # Check for both error formats
-            if data.get("error_code") != 0 or data.get("status") == 404:
-                # Handle both error formats
-                error_code = data.get("error_code") or data.get("status")
-                error_message = data.get("error_msg") or data.get("msg", "No specific error message provided by Akool.")
-                error_msg = f"Akool faceswap API error. Code: {error_code}. Message: {error_message}"
+            if data.get("code") != 1000:
+                error_msg = f"Akool faceswap API error. Code: {data.get('code')}. Message: {data.get('msg', 'No specific error message provided by Akool.')}"
                 print(error_msg)
                 print(f"Full Akool error response: {json.dumps(data)}")
-                
-                # If it's a 404, it might be because the educational video URL is not set
-                if data.get("status") == 404:
-                    if not EDUCATIONAL_VIDEO_URL:
-                        error_msg += " (EDUCATIONAL_VIDEO_URL is not set in environment variables)"
-                    else:
-                        error_msg += f" (Check if EDUCATIONAL_VIDEO_URL is accessible: {EDUCATIONAL_VIDEO_URL})"
-                        # Add more detailed error information
-                        error_msg += "\nPlease verify:\n"
-                        error_msg += f"1. Video URL is accessible: {EDUCATIONAL_VIDEO_URL}\n"
-                        error_msg += f"2. Video format is supported (MP4, M4V)\n"
-                        error_msg += f"3. Video is publicly accessible\n"
-                        error_msg += f"4. Video file exists and is not corrupted"
-                
                 raise HTTPException(status_code=500, detail=error_msg)
             
             return {
-                "akool_task_id": data.get("task_id"),
-                "akool_job_id": data.get("job_id"),
-                "message": "Faceswap video generation started",
-                "details": data.get("msg"),
-                "direct_url": data.get("url")
+                "akool_task_id": data.get("data", {}).get("_id"),
+                "akool_job_id": data.get("data", {}).get("job_id"),
+                "message": data.get("msg", "Faceswap video generation started"),
+                "details": None,
+                "direct_url": data.get("data", {}).get("url")
             }
             
     except httpx.HTTPStatusError as hse:
-        # This catches errors from response.raise_for_status() like 401, 403, 429, 5xx from Akool
         error_body = hse.response.text
         print(f"Akool Faceswap API returned HTTP error: {hse.response.status_code}. Response: {error_body}")
         detail_message = f"Akool API request failed with status {hse.response.status_code}."
         try:
-            # Attempt to parse error from Akool's JSON response if it's a JSON error
             error_json = hse.response.json()
-            detail_message += f" Akool message: {error_json.get('error_msg', error_json.get('message', 'No specific message.'))}"
+            detail_message += f" Akool message: {error_json.get('msg', error_json.get('error_msg', 'No specific message.'))}"
         except json.JSONDecodeError:
-            detail_message += f" Response body: {error_body[:200]}" # Show first 200 chars
-        raise HTTPException(status_code=502, detail=detail_message) # 502 Bad Gateway, as we failed to get valid response
+            detail_message += f" Response body: {error_body[:200]}"
+        raise HTTPException(status_code=502, detail=detail_message)
     except HTTPException as he:
-        print(f"HTTP Exception in faceswap: {str(he.detail)}") # Log the detail of our own HTTPExceptions
-        raise he # Re-raise it
+        print(f"HTTP Exception in faceswap: {str(he.detail)}")
+        raise he
     except Exception as e:
         error_msg = f"Unexpected error in faceswap: {str(e)}"
         print(error_msg)
